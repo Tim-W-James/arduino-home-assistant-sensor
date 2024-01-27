@@ -10,6 +10,10 @@
 #define DHT_PIN 22
 #define DHT_TYPE DHT11
 DHT dht(DHT_PIN, DHT_TYPE);
+const float temp_offset = 2;
+
+// Soil moisture sensor
+const int soil_pin = 35;
 
 // LCD
 const int rs = 27, en = 26, d4 = 25, d5 = 33, d6 = 32, d7 = 23;
@@ -91,7 +95,9 @@ void loop()
     // Read humidity
     float humidity = dht.readHumidity();
     // Read temperature as Celsius
-    float tempC = dht.readTemperature();
+    float tempC = dht.readTemperature() - temp_offset;
+    // Read soil moisture
+    float soil_moisture = map(analogRead(soil_pin), 0, 2000, 0, 100);
 
     // Check if any reads failed
     if (isnan(humidity) || isnan(tempC))
@@ -109,12 +115,20 @@ void loop()
       Serial.print("Temperature: [");
       Serial.print(tempC);
       Serial.print("°C]");
+
+      Serial.print("  |  ");
+
+      Serial.print("Soil moisture: [");
+      Serial.print(soil_moisture);
+      Serial.print("%]");
       Serial.println();
 
       char tempC_out[20];
       dtostrf(tempC, 2, 2, tempC_out);
       char humidity_out[20];
       dtostrf(humidity, 2, 2, humidity_out);
+      char soil_moisture_out[20];
+      dtostrf(soil_moisture, 2, 2, soil_moisture_out);
 
       // Write to LCD
       lcd.setCursor(0, 0);
@@ -128,8 +142,9 @@ void loop()
 
       // Write to Home Assistant
       StaticJsonDocument<200> payload;
-      payload["temp"] = tempC_out;
-      payload["hum"] = humidity_out;
+      payload["temperature"] = tempC_out;
+      payload["humidity"] = humidity_out;
+      payload["soil_moisture"] = soil_moisture_out;
 
       String strPayload;
       serializeJson(payload, strPayload);
@@ -215,18 +230,19 @@ void sendMqttMessage(String topic, String message)
   Serial.println();
 }
 
-void InitMqttHomeAssistantDiscoveryConfig(String unit_name, String unit_shorthand, String unit_of_meas)
+// Unit name must be one of: https://www.home-assistant.io/integrations/sensor/#device-class
+void InitMqttHomeAssistantDiscoveryConfig(String unit_name, String unit_class, String unit_of_meas, String topic)
 {
   String strPayload;
   StaticJsonDocument<600> payload;
 
-  String discoveryTopic = "homeassistant/sensor/esp32iotsensor/" + device_name + "_" + unit_shorthand + "/config";
+  String discoveryTopic = "homeassistant/sensor/esp32iotsensor/" + device_name + "_" + unit_name + "/config";
 
-  payload["name"] = device_name + "." + unit_shorthand;
-  payload["uniq_id"] = unique_id + "_" + unit_shorthand;
-  payload["stat_t"] = mqtt_topic;
-  payload["dev_cla"] = unit_name;
-  payload["val_tpl"] = "{{ value_json." + unit_shorthand + " | is_defined }}";
+  payload["name"] = device_name + "." + unit_name;
+  payload["uniq_id"] = unique_id + "_" + unit_name;
+  payload["stat_t"] = topic;
+  payload["dev_cla"] = unit_class;
+  payload["val_tpl"] = "{{ value_json." + unit_name + " | is_defined }}";
   payload["unit_of_meas"] = unit_of_meas;
   JsonObject device = payload.createNestedObject("device");
   device["name"] = device_name;
@@ -244,8 +260,9 @@ void InitMqttHomeAssistantDiscoveryConfig(String unit_name, String unit_shorthan
 void MqttHomeAssistantDiscovery()
 {
   Serial.println("Establishing Home Assistant discovery...");
-  InitMqttHomeAssistantDiscoveryConfig("temperature", "temp", "°C");
-  InitMqttHomeAssistantDiscoveryConfig("humidity", "hum", "%");
+  InitMqttHomeAssistantDiscoveryConfig("temperature", "temperature", "°C", mqtt_topic);
+  InitMqttHomeAssistantDiscoveryConfig("humidity", "humidity", "%", mqtt_topic);
+  InitMqttHomeAssistantDiscoveryConfig("soil_moisture", "moisture", "%", mqtt_topic);
   Serial.println("Established Home Assistant discovery.");
   Serial.println();
 }
